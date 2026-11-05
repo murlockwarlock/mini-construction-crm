@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { CrmObject, Profile, Task } from '../types/domain'
 import { validateTask } from '../lib/validation'
 import { ErrorMessage, LoadingInline } from './Feedback'
@@ -10,13 +10,16 @@ export function TaskForm({ task, objects, executors, busy, onSubmit, onCancel }:
   const [assigneeId, setAssigneeId] = useState(task?.assignee_id ?? '')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [serverError, setServerError] = useState('')
+  const submitting = useRef(false)
   async function submit(event: React.FormEvent) {
     event.preventDefault()
+    if (busy || submitting.current) return
     const nextErrors = validateTask(title, description, objectId, assigneeId)
     setErrors(nextErrors)
     setServerError('')
     if (Object.keys(nextErrors).length) return
-    try { await onSubmit(title.trim(), description.trim(), objectId, assigneeId) } catch (error) { setServerError(error instanceof Error ? error.message : 'Не удалось сохранить задачу.') }
+    submitting.current = true
+    try { await onSubmit(title.trim(), description.trim(), objectId, assigneeId) } catch (error) { setServerError(error instanceof Error ? error.message : 'Не удалось сохранить задачу.') } finally { submitting.current = false }
   }
   return <form className="form-stack" onSubmit={submit} noValidate>
     {serverError && <ErrorMessage message={serverError} />}

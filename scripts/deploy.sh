@@ -12,9 +12,9 @@ else
   exit 1
 fi
 
-usage() { printf 'Usage: %s --main | --rollback\n' "$0"; }
+usage() { printf 'Usage: %s --main | --preview | --rollback\n' "$0"; }
 [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-[[ "$1" == '--main' || "$1" == '--rollback' ]] || { usage >&2; exit 2; }
+[[ "$1" == '--main' || "$1" == '--preview' || "$1" == '--rollback' ]] || { usage >&2; exit 2; }
 : "${DEPLOY_HOST:?DEPLOY_HOST is required}"
 : "${DEPLOY_USER:?DEPLOY_USER is required}"
 : "${DEPLOY_PORT:?DEPLOY_PORT is required}"
@@ -38,6 +38,49 @@ if [[ "$1" == '--rollback' ]]; then
   ssh "${SSH_OPTIONS[@]}" "$REMOTE" rm -f "$REMOTE_SCRIPT" >/dev/null 2>&1 || true
   curl --fail --silent --show-error --max-time 20 "https://$DEPLOY_DOMAIN/login" >/dev/null
   printf 'Frontend rollback completed\n'
+  exit 0
+fi
+
+if [[ "$1" == '--preview' ]]; then
+  LOCAL_CONFIG_FILE="$ROOT_DIR/.env"
+  if [[ -f "$LOCAL_CONFIG_FILE" ]]; then
+    set -a
+    . "$LOCAL_CONFIG_FILE"
+    set +a
+  else
+    printf 'Missing .env with VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY\n' >&2
+    exit 1
+  fi
+  PREVIEW_SUPABASE_URL="${VITE_SUPABASE_URL:-${SUPABASE_URL:-}}"
+  PREVIEW_SUPABASE_KEY="${VITE_SUPABASE_PUBLISHABLE_KEY:-${SUPABASE_PUBLISHABLE_KEY:-}}"
+  : "${PREVIEW_SUPABASE_URL:?VITE_SUPABASE_URL is required for preview}"
+  : "${PREVIEW_SUPABASE_KEY:?VITE_SUPABASE_PUBLISHABLE_KEY is required for preview}"
+  for command_name in git npm; do command -v "$command_name" >/dev/null || { printf '%s is required\n' "$command_name" >&2; exit 1; }; done
+  BRANCH=$(git -C "$ROOT_DIR" branch --show-current)
+  [[ -n "$BRANCH" && "$BRANCH" != 'main' ]] || { printf 'Preview deploy requires a non-main feature branch\n' >&2; exit 1; }
+  [[ -z "$(git -C "$ROOT_DIR" status --porcelain)" ]] || { printf 'Working tree must be clean before preview deploy\n' >&2; exit 1; }
+  REVISION=$(git -C "$ROOT_DIR" rev-parse --verify HEAD)
+  REMOTE_BUNDLE="/tmp/crm-preview-$REVISION.tar.gz"
+  REMOTE_SCRIPT="/tmp/crm-preview-deploy-$REVISION.sh"
+  TEMP_DIR=$(mktemp -d)
+  cleanup() { rm -rf "$TEMP_DIR"; ssh "${SSH_OPTIONS[@]}" "$REMOTE" rm -f "$REMOTE_BUNDLE" "$REMOTE_SCRIPT" >/dev/null 2>&1 || true; }
+  trap cleanup EXIT
+
+  printf 'Building preview revision %s\n' "$REVISION"
+  npm --prefix "$ROOT_DIR" run build
+  printf '%s\n' "$REVISION" > "$ROOT_DIR/dist/REVISION"
+  printf 'window.__APP_CONFIG__ = %s;\n' "$(printf '{\"supabaseUrl\":\"%s\",\"supabasePublishableKey\":\"%s\",\"appEnv\":\"preview\"}' "$PREVIEW_SUPABASE_URL" "$PREVIEW_SUPABASE_KEY")" > "$ROOT_DIR/dist/config.js"
+  printf '{"commit":"%s"}\n' "$REVISION" > "$ROOT_DIR/dist/manifest.json"
+  (cd "$ROOT_DIR/dist" && find . -type f ! -name DEPLOY_MANIFEST.sha256 -print0 | sort -z | xargs -0 shasum -a 256 > DEPLOY_MANIFEST.sha256)
+  tar -C "$ROOT_DIR/dist" -czf "$TEMP_DIR/bundle.tar.gz" .
+  BUNDLE_SHA=$(shasum -a 256 "$TEMP_DIR/bundle.tar.gz" | awk '{print $1}')
+
+  scp "${SCP_OPTIONS[@]}" "$ROOT_DIR/deploy/remote_deploy.sh" "$REMOTE:$REMOTE_SCRIPT"
+  scp "${SCP_OPTIONS[@]}" "$TEMP_DIR/bundle.tar.gz" "$REMOTE:$REMOTE_BUNDLE"
+  ssh "${SSH_OPTIONS[@]}" "$REMOTE" bash "$REMOTE_SCRIPT" "$REMOTE_BUNDLE" "$REVISION" "$BUNDLE_SHA" "$DEPLOY_APP_DIR" "$DEPLOY_DOMAIN"
+  curl --fail --silent --show-error --max-time 20 "https://$DEPLOY_DOMAIN/login" >/dev/null
+  curl --fail --silent --show-error --max-time 20 "https://$DEPLOY_DOMAIN/manifest.json" | grep -Fq '"commit":"'$REVISION'"'
+  printf 'Preview deployed %s to https://%s\n' "$REVISION" "$DEPLOY_DOMAIN"
   exit 0
 fi
 
