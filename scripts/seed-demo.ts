@@ -35,42 +35,71 @@ const manager = createClient(url, anonKey, { auth: { autoRefreshToken: false, pe
 const { error: loginError } = await manager.auth.signInWithPassword({ email: users[0].email, password })
 if (loginError) throw loginError
 
-const { data: existingObjects, error: objectError } = await manager.from('objects').select('id').eq('name', 'ЖК Северный парк').is('deleted_at', null)
-if (objectError) throw objectError
-if (!existingObjects?.length) {
-  const { data: object, error: createObjectError } = await manager.rpc('create_object', { p_name: 'ЖК Северный парк', p_address: 'г. Алматы, ул. Абая, 25' })
-  if (createObjectError || !object) throw createObjectError ?? new Error('Object was not created')
-  const objectId = (object as { id: string }).id
-  const executor1 = ids.get(users[2].email)!
-  const executor2 = ids.get(users[3].email)!
-  const tasks = [
-    ['Проверить смету кровельных работ', 'Сверить позиции с последней ведомостью.', executor1, 'in_progress'],
-    ['Подготовить площадку для техники', 'Проверить доступ и временные ограждения.', executor2, 'review'],
-    ['Согласовать поставку окон', 'Подтвердить сроки поставки с подрядчиком.', executor1, 'rework'],
-    ['Принять исполнительную документацию', 'Проверить комплект документов.', executor2, 'accepted']
-  ] as const
-  const executorClients = new Map<string, SupabaseClient>()
-  for (const [email, id] of [[users[2].email, executor1], [users[3].email, executor2]] as const) {
-    const client = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } })
-    const { error } = await client.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    executorClients.set(id, client)
+const executor1 = ids.get(users[2].email)!
+const executor2 = ids.get(users[3].email)!
+const executorClients = new Map<string, SupabaseClient>()
+for (const [email, id] of [[users[2].email, executor1], [users[3].email, executor2]] as const) {
+  const client = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } })
+  const { error } = await client.auth.signInWithPassword({ email, password })
+  if (error) throw error
+  executorClients.set(id, client)
+}
+
+const objectSpecs = [
+  {
+    name: 'ЖК Северный парк',
+    address: 'г. Алматы, ул. Абая, 25',
+    tasks: [
+      ['Проверить смету кровельных работ', 'Сверить позиции с последней ведомостью.', executor1, 'in_progress'],
+      ['Подготовить площадку для техники', 'Проверить доступ и временные ограждения.', executor2, 'review'],
+      ['Согласовать поставку окон', 'Подтвердить сроки поставки с подрядчиком.', executor1, 'rework'],
+      ['Принять исполнительную документацию', 'Проверить комплект документов.', executor2, 'accepted']
+    ]
+  },
+  {
+    name: 'Школа на Медеу',
+    address: 'г. Алматы, ул. Жамакаева, 18',
+    tasks: [
+      ['Проверить окна и двери', 'Сверить установленные позиции с ведомостью.', executor1, 'review'],
+      ['Подготовить акт приёмки', 'Собрать документы для передачи заказчику.', executor2, 'accepted']
+    ]
+  },
+  {
+    name: 'Складской комплекс Восток',
+    address: 'г. Алматы, пр. Суюнбая, 245',
+    tasks: [
+      ['Сверить план поставок', 'Проверить ближайшие даты и объёмы поставки.', executor2, 'new'],
+      ['Уточнить ограждение площадки', 'Добавить замечания по периметру объекта.', executor1, 'rework']
+    ]
   }
-  for (const [title, description, assignee, desiredStatus] of tasks) {
+] as const
+
+for (const spec of objectSpecs) {
+  const { data: existingObjects, error: objectError } = await manager.from('objects').select('id').eq('name', spec.name).is('deleted_at', null)
+  if (objectError) throw objectError
+  let objectId = existingObjects?.[0]?.id
+  if (!objectId) {
+    const { data: object, error: createObjectError } = await manager.rpc('create_object', { p_name: spec.name, p_address: spec.address })
+    if (createObjectError || !object) throw createObjectError ?? new Error('Object was not created')
+    objectId = (object as { id: string }).id
+  }
+  for (const [title, description, assignee, desiredStatus] of spec.tasks) {
+    const { data: existingTasks, error: taskLookupError } = await manager.from('tasks').select('id').eq('object_id', objectId).eq('title', title).is('deleted_at', null)
+    if (taskLookupError) throw taskLookupError
+    if (existingTasks?.length) continue
     const { data: task, error: taskError } = await manager.rpc('create_task', { p_title: title, p_description: description, p_object_id: objectId, p_assignee_id: assignee })
     if (taskError || !task) throw taskError ?? new Error('Task was not created')
     const taskId = (task as { id: string }).id
+    if (desiredStatus === 'new') continue
     const executorClient = executorClients.get(assignee)!
     const first = await executorClient.rpc('change_task_status', { p_task_id: taskId, p_expected_status: 'new', p_new_status: 'in_progress', p_comment: null })
     if (first.error) throw first.error
-    if (desiredStatus === 'review' || desiredStatus === 'rework' || desiredStatus === 'accepted') {
-      const second = await executorClient.rpc('change_task_status', { p_task_id: taskId, p_expected_status: 'in_progress', p_new_status: 'review', p_comment: null })
-      if (second.error) throw second.error
-    }
-    if (desiredStatus === 'rework' || desiredStatus === 'accepted') {
-      const next = await manager.rpc('change_task_status', { p_task_id: taskId, p_expected_status: 'review', p_new_status: desiredStatus, p_comment: desiredStatus === 'rework' ? 'Уточнить комплект документов.' : null })
-      if (next.error) throw next.error
-    }
+    if (desiredStatus === 'in_progress') continue
+    const second = await executorClient.rpc('change_task_status', { p_task_id: taskId, p_expected_status: 'in_progress', p_new_status: 'review', p_comment: null })
+    if (second.error) throw second.error
+    if (desiredStatus === 'review') continue
+    const next = await manager.rpc('change_task_status', { p_task_id: taskId, p_expected_status: 'review', p_new_status: desiredStatus, p_comment: desiredStatus === 'rework' ? 'Уточнить комплект документов.' : null })
+    if (next.error) throw next.error
   }
 }
 console.log(JSON.stringify({ status: 'seeded', users: users.map(user => ({ email: user.email, role: user.role })) }))
