@@ -92,7 +92,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          supabase start
+          if ! supabase start > /tmp/mini-crm-supabase-start.log 2>&1; then
+            sed -E 's/(sb_(publishable|secret)_[A-Za-z0-9_-]+)/[REDACTED]/g; s/(eyJ[A-Za-z0-9._-]+)/[REDACTED]/g' /tmp/mini-crm-supabase-start.log >&2
+            exit 1
+          fi
           supabase status -o env > .supabase.env
           # The CLI emits shell-compatible quoted values; source only this runner-local file.
           source .supabase.env
