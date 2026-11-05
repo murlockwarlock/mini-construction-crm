@@ -85,9 +85,9 @@ jobs:
           node-version: 20.11.1
           cache: npm
       - run: npm ci
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v3
         with:
-          version: 2.167.0
+          version: v2.stable
       - name: Start isolated Supabase PostgreSQL
         shell: bash
         run: |
@@ -151,7 +151,7 @@ jobs:
           retention-days: 7
       - name: Stop isolated Supabase
         if: always()
-        run: supabase stop
+        run: command -v supabase >/dev/null && supabase stop || true
 
   verified-artifact:
     name: Verified artifact gate
