@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Exact commit SHA to verify'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Code quality and build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Verify exact candidate SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - name: Check repository for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(sb_secret_[A-Za-z0-9_=-]{20,}|eyJhbGciOiJ[A-Za-z0-9._-]{20,}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----)' -- ':!package-lock.json'; then
+            echo 'Potential secret found in tracked files' >&2
+            exit 1
+          fi
+          test ! -f .env
+      - run: npm run build
+      - name: Write build manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          tree="$(git rev-parse HEAD^{tree})"
+          printf '{"commit":"%s","tree":"%s","workflow_run":"%s","app":"mini-crm"}\n' "$sha" "$tree" "$GITHUB_RUN_ID" > dist/manifest.json
+          (cd dist && sha256sum index.html manifest.json > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crm-build-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 30
+
+  integration:
+    name: PostgreSQL, API security and browser E2E
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    needs: quality
+    env:
+      SUPABASE_DB_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+      - name: Verify exact candidate SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v3
+        with:
+          version: v2.stable
+      - name: Start isolated Supabase PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! supabase start > /tmp/mini-crm-supabase-start.log 2>&1; then
+            sed -E 's/(sb_(publishable|secret)_[A-Za-z0-9_-]+)/[REDACTED]/g; s/(eyJ[A-Za-z0-9._-]+)/[REDACTED]/g' /tmp/mini-crm-supabase-start.log >&2
+            exit 1
+          fi
+          supabase status -o env > .supabase.env
+          # The CLI emits shell-compatible quoted values; source only this runner-local file.
+          source .supabase.env
+          api_url="$API_URL"
+          anon_key="$ANON_KEY"
+          service_key="$SERVICE_ROLE_KEY"
+          db_url="$DB_URL"
+          test -n "$api_url"; test -n "$anon_key"; test -n "$service_key"; test -n "$db_url"
+          printf 'SUPABASE_URL=%s\nSUPABASE_ANON_KEY=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$api_url" "$anon_key" "$service_key" >> "$GITHUB_ENV"
+          printf 'SUPABASE_DB_URL=%s\n' "$db_url" >> "$GITHUB_ENV"
+          printf 'VITE_SUPABASE_URL=%s\nVITE_SUPABASE_PUBLISHABLE_KEY=%s\n' "$api_url" "$anon_key" >> "$GITHUB_ENV"
+          printf 'PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173\n' >> "$GITHUB_ENV"
+          password="$(openssl rand -hex 32)A1!"
+          printf '::add-mask::%s\n' "$password"
+          printf 'TEST_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
+      - name: Apply migrations and pgTAP
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase db reset --no-seed
+          psql "$SUPABASE_DB_URL" -Atqc 'show server_version;' > postgres-version.txt
+          printf 'POSTGRES_VERSION=%s\n' "$(<postgres-version.txt)" >> "$GITHUB_ENV"
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -Atqc "select extname from pg_extension where extname = 'pgcrypto';" > pg-extensions.txt
+          test "$(<pg-extensions.txt)" = 'pgcrypto'
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -c 'create extension if not exists pgtap;' >/dev/null
+          supabase test db
+          supabase db reset --no-seed
+      - name: Seed isolated Auth users
+        run: npx tsx scripts/ci/seed-ci.ts
+      - name: Run direct API security matrix
+        run: npm run test:api
+      - name: Build and serve the tested frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          npm run preview -- --host 127.0.0.1 > /tmp/mini-crm-preview.log 2>&1 &
+          echo $! > /tmp/mini-crm-preview.pid
+          for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:4173/login >/dev/null && exit 0; sleep 1; done
+          cat /tmp/mini-crm-preview.log
+          exit 1
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Run browser E2E and visual checks
+        run: npm run test:e2e
+      - name: Upload browser and database reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports-${{ github.run_id }}
+          path: |
+            test-results
+            pg-extensions.txt
+            /tmp/mini-crm-preview.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop isolated Supabase
+        if: always()
+        run: command -v supabase >/dev/null && supabase stop || true
+
+  verified-artifact:
+    name: Verified artifact gate
+    runs-on: ubuntu-22.04
+    needs: [quality, integration]
+    if: ${{ needs.quality.result == 'success' && needs.integration.result == 'success' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: crm-build-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          path: dist
+      - name: Verify artifact provenance and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/manifest.json
+          expected="${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}"
+          actual="$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist/manifest.json','utf8')).commit)")"
+          test "$actual" = "$expected"
+          (cd dist && sha256sum -c SHA256SUMS)
