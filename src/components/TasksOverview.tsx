@@ -67,7 +67,7 @@ function TaskListRow({ task, profile, manager }: { task: Task; profile: Profile;
     <div className="task-list-primary"><Link to={`/tasks/${task.id}`} className="task-list-title">{task.title}</Link><span>{task.object?.name ?? 'Объект'}</span></div>
     {manager && <span className="task-list-assignee">{task.assignee?.display_name ?? 'Исполнитель не указан'}</span>}
     <StatusBadge status={task.status} />
-    <div className="task-list-action"><span>{action || 'Открыть задачу'}</span><Link to={`/tasks/${task.id}`}>Открыть <ArrowRight size={14} aria-hidden="true" /></Link></div>
+    <div className={`task-list-action${action ? '' : ' is-empty'}`}>{action && <span>{action}</span>}<Link to={`/tasks/${task.id}`}>Открыть <ArrowRight size={14} aria-hidden="true" /></Link></div>
   </article>
 }
 
@@ -93,6 +93,7 @@ export function TasksOverview({ title, lead, tasks, profile, manager, loading, l
     if (manager && executorFilter !== 'all' && task.assignee?.id !== executorFilter) return false
     return true
   }), [executorFilter, manager, objectFilter, statusFilter, tasks])
+  const activeTaskCount = tasks.filter(task => task.status !== 'accepted').length
   const tasksByStatus = useMemo(() => {
     const result = STATUS_ORDER.reduce((groups, status) => ({ ...groups, [status]: [] as Task[] }), {} as Record<TaskStatus, Task[]>)
     filteredTasks.forEach(task => result[task.status].push(task))
@@ -100,7 +101,7 @@ export function TasksOverview({ title, lead, tasks, profile, manager, loading, l
   }, [filteredTasks])
 
   return <section className="page task-overview">
-    <div className="page-header task-overview-header"><div><h1>{title}</h1><p className="page-lead">{lead}</p></div>{loaded && <div className="task-overview-total"><strong>{tasks.length}</strong><span>активных задач</span></div>}</div>
+    <div className="page-header task-overview-header"><div><h1>{title}</h1><p className="page-lead">{lead}</p></div>{loaded && <div className="task-overview-total"><strong>{activeTaskCount}</strong><span>активных задач</span></div>}</div>
     {error && <div className="task-load-error"><ErrorMessage message={error} /><button type="button" className="button secondary" onClick={() => void onRetry()} disabled={loading}>Повторить</button></div>}
     {!loaded && loading ? <div className="loading-block"><LoadingInline label="Загружаем задачи…" /></div> : loaded && <>
       <div className="task-summary" aria-label="Количество задач по статусам">{STATUS_ORDER.map(status => { const count = tasksByStatus[status].length; const attention = manager && status === 'review' && count > 0; return <div key={status} className={`task-summary-item task-summary-${status}${attention ? ' needs-review' : ''}`}><span>{STATUS_LABELS[status]}</span><strong>{count}</strong>{attention && <small>Нужно решение</small>}</div> })}</div>
