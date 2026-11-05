@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { executor, login, logout, manager, uniqueLabel } from './helpers'
+import { executor, login, logout, manager, openNavigation, uniqueLabel } from './helpers'
 
 async function createTask(page: Parameters<typeof login>[0], objectName: string, taskTitle: string) {
   await login(page, manager)
@@ -51,6 +51,7 @@ test('executor completes an isolated task and manager returns it with a comment'
   await createTask(page, objectName, taskTitle)
   await logout(page)
   await login(page, executor)
+  await openNavigation(page)
   await page.getByRole('link', { name: 'Мои задачи' }).click()
   await page.getByRole('link', { name: new RegExp(taskTitle) }).click()
   await page.getByRole('button', { name: 'Взять в работу' }).click()

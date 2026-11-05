@@ -23,3 +23,8 @@ export async function logout(page: Page) {
   await page.getByRole('button', { name: 'Выйти' }).click()
   await expect(page).toHaveURL(/\/login/)
 }
+
+export async function openNavigation(page: Page) {
+  const menuButton = page.getByRole('button', { name: /Открыть меню|Закрыть меню/ })
+  if (await menuButton.isVisible() && (await menuButton.getAttribute('aria-expanded')) !== 'true') await menuButton.click()
+}
