@@ -94,6 +94,7 @@ npm --prefix "$ROOT_DIR" ci
 npm --prefix "$ROOT_DIR" run build
 printf '%s\n' "$REVISION" > "$ROOT_DIR/dist/REVISION"
 printf 'window.__APP_CONFIG__ = %s;\n' "$(printf '{\"supabaseUrl\":\"%s\",\"supabasePublishableKey\":\"%s\",\"appEnv\":\"cloud\"}' "$SUPABASE_URL" "$SUPABASE_PUBLISHABLE_KEY")" > "$ROOT_DIR/dist/config.js"
+printf '{"commit":"%s"}\n' "$REVISION" > "$ROOT_DIR/dist/manifest.json"
 (cd "$ROOT_DIR/dist" && find . -type f ! -name DEPLOY_MANIFEST.sha256 -print0 | sort -z | xargs -0 shasum -a 256 > DEPLOY_MANIFEST.sha256)
 tar -C "$ROOT_DIR/dist" -czf "$TEMP_DIR/bundle.tar.gz" .
 BUNDLE_SHA=$(shasum -a 256 "$TEMP_DIR/bundle.tar.gz" | awk '{print $1}')
