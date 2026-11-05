@@ -59,13 +59,15 @@ await expectNoRowsOrDenied('anon profiles read', async () => await anon.from('pr
 await expectNoRowsOrDenied('anon objects read', async () => await anon.from('objects').select('id').limit(1))
 await expectNoRowsOrDenied('anon tasks read', async () => await anon.from('tasks').select('id').limit(1))
 await expectNoRowsOrDenied('anon history read', async () => await anon.from('task_status_history').select('id').limit(1))
+await expectNoRowsOrDenied('anon comments read', async () => await anon.from('task_comments').select('id').limit(1))
 
-const initialHistory = await manager.client.from('task_status_history').select('id').eq('task_id', taskId).order('created_at', { ascending: true })
+const initialHistory = await manager.client.from('task_status_history').select('id,activity_order').eq('task_id', taskId).order('activity_order', { ascending: true })
 if (initialHistory.error || !initialHistory.data?.length) throw initialHistory.error ?? new Error('initial history is missing')
+if (initialHistory.data[0].activity_order !== 1) throw new Error('task creation history is not the first activity')
 const initialState = await Promise.all([
   manager.client.from('objects').select('*').eq('id', objectId).single(),
   manager.client.from('tasks').select('*').eq('id', taskId).single(),
-  manager.client.from('task_status_history').select('*').eq('task_id', taskId).order('created_at', { ascending: true })
+  manager.client.from('task_status_history').select('*').eq('task_id', taskId).order('activity_order', { ascending: true })
 ])
 if (initialState.some(result => result.error)) throw initialState.find(result => result.error)?.error
 
@@ -79,16 +81,33 @@ await expectDenied('executor status for foreign task', async () => await executo
 await expectDenied('executor direct history insert', async () => await executor1.client.from('task_status_history').insert({ task_id: taskId, actor_id: executor2.id, to_status: 'in_progress' }))
 await expectDenied('executor direct history update', async () => await executor1.client.from('task_status_history').update({ comment: 'tampered' }).eq('id', initialHistory.data[0].id))
 await expectDenied('executor direct history delete', async () => await executor1.client.from('task_status_history').delete().eq('id', initialHistory.data[0].id))
+await expectDenied('executor direct comment insert', async () => await executor1.client.from('task_comments').insert({ task_id: taskId, author_id: executor1.id, body: 'forbidden', activity_order: 99 }))
 const { data: unchangedTask, error: unchangedTaskError } = await manager.client.from('tasks').select('title,status').eq('id', taskId).single()
 if (unchangedTaskError) throw unchangedTaskError
 if (unchangedTask.title !== taskTitle || unchangedTask.status !== 'new') throw new Error('denied API operation changed task state')
 const finalState = await Promise.all([
   manager.client.from('objects').select('*').eq('id', objectId).single(),
   manager.client.from('tasks').select('*').eq('id', taskId).single(),
-  manager.client.from('task_status_history').select('*').eq('task_id', taskId).order('created_at', { ascending: true })
+  manager.client.from('task_status_history').select('*').eq('task_id', taskId).order('activity_order', { ascending: true })
 ])
 if (finalState.some(result => result.error)) throw finalState.find(result => result.error)?.error
 if (JSON.stringify(initialState.map(result => result.data)) !== JSON.stringify(finalState.map(result => result.data))) throw new Error('denied API operation changed persisted data')
+
+const managerComment = await manager.client.rpc('add_task_comment', { p_task_id: taskId, p_body: 'Проверить комплектность результата' })
+if (managerComment.error || !managerComment.data) throw managerComment.error ?? new Error('manager comment could not be created')
+if ((managerComment.data as { author_id: string }).author_id !== manager.id) throw new Error('comment author was not assigned by the database')
+const executorComment = await executor1.client.rpc('add_task_comment', { p_task_id: taskId, p_body: 'Результат передан на проверку' })
+if (executorComment.error || !executorComment.data) throw executorComment.error ?? new Error('executor comment could not be created')
+if ((executorComment.data as { author_id: string }).author_id !== executor1.id) throw new Error('executor comment author was not assigned by the database')
+await expectDenied('executor comment for foreign task', async () => await executor2.client.rpc('add_task_comment', { p_task_id: taskId, p_body: 'forbidden' }))
+const { data: comments, error: commentsError } = await manager.client.from('task_comments').select('id,author_id,created_at,activity_order,body').eq('task_id', taskId).order('activity_order', { ascending: true })
+if (commentsError || comments?.length !== 2) throw commentsError ?? new Error('comment activity rows are missing')
+if (!comments.every(row => row.created_at && row.activity_order > 1)) throw new Error('comment metadata was not assigned by the database')
+const { data: foreignComments, error: foreignCommentsError } = await executor2.client.from('task_comments').select('id').eq('task_id', taskId)
+if (foreignCommentsError) throw foreignCommentsError
+if (foreignComments?.length) throw new Error('executor read foreign task comments')
+await expectDenied('executor direct comment update', async () => await executor1.client.from('task_comments').update({ body: 'tampered' }).eq('id', (executorComment.data as { id: string }).id))
+await expectDenied('executor direct comment delete', async () => await executor1.client.from('task_comments').delete().eq('id', (executorComment.data as { id: string }).id))
 
 const { data: visibleToExecutor2, error: readError } = await executor2.client.from('tasks').select('id').eq('id', taskId)
 if (readError) throw readError
@@ -118,7 +137,7 @@ if (completedTransition.error) throw completedTransition.error
 const { data: completedTask, error: completedTaskError } = await manager.client.from('tasks').select('status').eq('id', taskId).single()
 if (completedTaskError) throw completedTaskError
 if (completedTask.status !== 'accepted') throw new Error('full task cycle did not reach accepted')
-const { data: completedHistory, error: completedHistoryError } = await manager.client.from('task_status_history').select('actor_id,from_status,to_status').eq('task_id', taskId).order('created_at', { ascending: true })
+const { data: completedHistory, error: completedHistoryError } = await manager.client.from('task_status_history').select('actor_id,from_status,to_status,activity_order').eq('task_id', taskId).order('activity_order', { ascending: true })
 if (completedHistoryError) throw completedHistoryError
 const completedTransitions = completedHistory?.map(row => `${row.actor_id}:${row.from_status ?? 'none'}:${row.to_status}`) ?? []
 if (completedTransitions.length !== 4 || completedTransitions[1] !== `${executor1.id}:new:in_progress` || completedTransitions[2] !== `${executor1.id}:in_progress:review` || completedTransitions[3] !== `${manager.id}:review:accepted`) throw new Error('full task cycle history is incomplete')

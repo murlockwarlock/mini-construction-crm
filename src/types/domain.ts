@@ -36,10 +36,21 @@ export interface StatusHistory {
   task_id: string
   actor_id: string
   created_at: string
+  activity_order?: number | null
   from_status: TaskStatus | null
   to_status: TaskStatus
   comment: string | null
   actor?: Pick<Profile, 'id' | 'display_name' | 'role'>
+}
+
+export interface TaskComment {
+  id: string
+  task_id: string
+  author_id: string
+  created_at: string
+  activity_order?: number | null
+  body: string
+  author?: Pick<Profile, 'id' | 'display_name' | 'role'>
 }
 
 export interface Database {
@@ -49,6 +60,7 @@ export interface Database {
       objects: { Row: CrmObject; Insert: Partial<CrmObject> & Pick<CrmObject, 'name' | 'address'>; Update: Partial<CrmObject> }
       tasks: { Row: Task; Insert: Partial<Task>; Update: Partial<Task> }
       task_status_history: { Row: StatusHistory; Insert: Partial<StatusHistory>; Update: Partial<StatusHistory> }
+      task_comments: { Row: TaskComment; Insert: Partial<TaskComment>; Update: never }
     }
     Functions: {
       create_object: { Args: { p_name: string; p_address: string }; Returns: CrmObject }
@@ -58,6 +70,7 @@ export interface Database {
       update_task: { Args: { p_id: string; p_title: string; p_description: string; p_object_id: string; p_assignee_id: string }; Returns: Task }
       delete_task: { Args: { p_id: string }; Returns: Task }
       change_task_status: { Args: { p_task_id: string; p_expected_status: TaskStatus; p_new_status: TaskStatus; p_comment?: string | null }; Returns: Task }
+      add_task_comment: { Args: { p_task_id: string; p_body: string }; Returns: TaskComment }
     }
   }
 }
