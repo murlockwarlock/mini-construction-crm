@@ -42,7 +42,7 @@ test('manager creates an object and a task, then sees its history', async ({ pag
   await page.getByRole('button', { name: 'Создать задачу' }).last().click()
   await expect(page.getByText('Задача создана.')).toBeVisible()
   await page.getByRole('link', { name: taskTitle }).click()
-  await expect(page.getByText('Задача создана: Новая')).toBeVisible()
+  await expect(page.getByText('Создал задачу')).toBeVisible()
 })
 
 test('executor completes an isolated task and manager returns it with a comment', async ({ page }) => {
@@ -65,7 +65,7 @@ test('executor completes an isolated task and manager returns it with a comment'
   await page.getByRole('button', { name: 'Вернуть на доработку' }).click()
   await page.getByRole('button', { name: 'Вернуть на доработку' }).last().click()
   await expect(page.getByText('Добавьте комментарий.')).toBeVisible()
-  await page.getByLabel('Комментарий').fill('Уточнить данные в журнале')
+  await page.getByRole('dialog').getByLabel('Комментарий').fill('Уточнить данные в журнале')
   await page.getByRole('button', { name: 'Вернуть на доработку' }).last().click()
   await expect(page.getByText('Статус изменён: На доработке.')).toBeVisible()
 })

@@ -4,6 +4,7 @@ import { AppLayout } from '../components/AppLayout'
 import { LoginPage } from '../pages/LoginPage'
 import { ObjectsPage } from '../pages/ObjectsPage'
 import { ObjectDetailsPage } from '../pages/ObjectDetailsPage'
+import { TasksPage } from '../pages/TasksPage'
 import { TaskDetailsPage } from '../pages/TaskDetailsPage'
 import { MyTasksPage } from '../pages/MyTasksPage'
 import { LoadingPage } from '../components/LoadingPage'
@@ -16,13 +17,19 @@ function Protected() {
   return <AppLayout><Outlet /></AppLayout>
 }
 
+function HomeRedirect() {
+  const { profile } = useAuth()
+  return <Navigate to={profile?.role === 'executor' ? '/my-tasks' : '/objects'} replace />
+}
+
 export function App() {
   return <Routes>
     <Route path="/login" element={<LoginPage />} />
     <Route element={<Protected />}>
-      <Route index element={<Navigate to="/objects" replace />} />
+      <Route index element={<HomeRedirect />} />
       <Route path="objects" element={<ObjectsPage />} />
       <Route path="objects/:objectId" element={<ObjectDetailsPage />} />
+      <Route path="tasks" element={<TasksPage />} />
       <Route path="tasks/:taskId" element={<TaskDetailsPage />} />
       <Route path="my-tasks" element={<MyTasksPage />} />
     </Route>

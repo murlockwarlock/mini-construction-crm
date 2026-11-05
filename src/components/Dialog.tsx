@@ -24,8 +24,8 @@ export function Dialog({ open, title, onClose, children, busy = false }: { open:
   }, [busy, onClose, open])
   if (!open) return null
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" ref={ref}>
-      <div className="dialog-header"><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Закрыть" onClick={onClose} disabled={busy}><X /></button></div>
+    <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-busy={busy} ref={ref}>
+      <div className="dialog-header"><h2 id="dialog-title">{title}</h2><button type="button" className="icon-button" aria-label="Закрыть" onClick={onClose} disabled={busy}><X /></button></div>
       <div className="dialog-body">{children}</div>
     </div>
   </div>

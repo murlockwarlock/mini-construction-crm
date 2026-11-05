@@ -14,7 +14,7 @@ export async function login(page: Page, user: { email: string; password: string 
   await page.getByLabel('Email').fill(user.email)
   await page.getByLabel('Пароль').fill(user.password)
   await page.getByRole('button', { name: 'Войти' }).click()
-  await expect(page).toHaveURL(/\/objects/)
+  await expect(page).toHaveURL(user.email.includes('executor') ? /\/my-tasks/ : /\/objects/)
 }
 
 export async function logout(page: Page) {

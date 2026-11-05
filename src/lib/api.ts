@@ -1,5 +1,5 @@
 import { getSupabaseClient } from './supabase'
-import type { AppRole, CrmObject, Profile, StatusHistory, Task, TaskStatus } from '../types/domain'
+import type { AppRole, CrmObject, Profile, StatusHistory, Task, TaskComment, TaskStatus } from '../types/domain'
 
 const rpcClient = () => getSupabaseClient() as unknown as { rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: Error | null }> }
 
@@ -33,16 +33,31 @@ export async function listMyTasks(userId: string): Promise<Task[]> {
   return (data ?? []) as Task[]
 }
 
-export async function getTask(id: string): Promise<{ task: Task; history: StatusHistory[] }> {
+export async function listAllTasks(): Promise<Task[]> {
+  const { data, error } = await getSupabaseClient().from('tasks').select('*, object:objects!tasks_object_id_fkey(id,name,address), assignee:profiles!tasks_assignee_id_fkey(id,display_name,role), author:profiles!tasks_author_id_fkey(id,display_name,role)').is('deleted_at', null).order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []) as Task[]
+}
+
+export async function getTask(id: string): Promise<{ task: Task; history: StatusHistory[]; comments: TaskComment[]; commentsAvailable: boolean }> {
   const client = getSupabaseClient()
-  const [{ data: task, error: taskError }, { data: history, error: historyError }] = await Promise.all([
+  const [{ data: task, error: taskError }, { data: history, error: historyError }, { data: comments, error: commentsError }] = await Promise.all([
     client.from('tasks').select('*, object:objects!tasks_object_id_fkey(id,name,address), assignee:profiles!tasks_assignee_id_fkey(id,display_name,role), author:profiles!tasks_author_id_fkey(id,display_name,role)').eq('id', id).maybeSingle(),
-    client.from('task_status_history').select('*, actor:profiles!task_status_history_actor_id_fkey(id,display_name,role)').eq('task_id', id).order('created_at', { ascending: true })
+    client.from('task_status_history').select('*, actor:profiles!task_status_history_actor_id_fkey(id,display_name,role)').eq('task_id', id).order('created_at', { ascending: true }).order('id', { ascending: true }),
+    client.from('task_comments').select('*, author:profiles!task_comments_author_id_fkey(id,display_name,role)').eq('task_id', id).order('created_at', { ascending: true }).order('id', { ascending: true })
   ])
   if (taskError) throw taskError
   if (historyError) throw historyError
+  const commentsUnavailable = Boolean(commentsError && (commentsError.code === 'PGRST205' || commentsError.message.includes('task_comments')))
+  if (commentsError && !commentsUnavailable) throw commentsError
   if (!task) throw new Error('Задача недоступна')
-  return { task: task as Task, history: (history ?? []) as StatusHistory[] }
+  return { task: task as Task, history: (history ?? []) as StatusHistory[], comments: (comments ?? []) as TaskComment[], commentsAvailable: !commentsUnavailable }
+}
+
+export async function addTaskComment(taskId: string, body: string): Promise<TaskComment> {
+  const { data, error } = await rpcClient().rpc('add_task_comment', { p_task_id: taskId, p_body: body.trim() })
+  if (error) throw error
+  return data as TaskComment
 }
 
 export async function listExecutors(): Promise<Profile[]> {
