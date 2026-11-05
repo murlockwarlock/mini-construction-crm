@@ -1,0 +1,16 @@
+begin;
+select plan(12);
+select ok(to_regclass('public.profiles') is not null, 'profiles table exists');
+select ok(to_regclass('public.objects') is not null, 'objects table exists');
+select ok(to_regclass('public.tasks') is not null, 'tasks table exists');
+select ok(to_regclass('public.task_status_history') is not null, 'history table exists');
+select ok((select t.typtype = 'e' from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'task_status'), 'task status is enum');
+select ok(to_regclass('public.tasks_assignee_idx') is not null, 'assignee index exists');
+select ok(exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'tasks' and policyname = 'tasks_select'), 'task select RLS exists');
+select ok(exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'task_status_history' and policyname = 'history_select'), 'history RLS exists');
+select ok(exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'change_task_status'), 'public status wrapper exists');
+select ok(exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname = 'change_task_status'), 'private status implementation exists');
+select ok((select p.prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname = 'change_task_status'), 'status implementation is definer');
+select ok(not (select p.prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'change_task_status'), 'status wrapper is invoker');
+select * from finish();
+rollback;
