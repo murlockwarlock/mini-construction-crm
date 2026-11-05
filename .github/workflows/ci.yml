@@ -57,7 +57,7 @@ jobs:
           sha="$(git rev-parse HEAD)"
           tree="$(git rev-parse HEAD^{tree})"
           printf '{"commit":"%s","tree":"%s","workflow_run":"%s","app":"mini-crm"}\n' "$sha" "$tree" "$GITHUB_RUN_ID" > dist/manifest.json
-          sha256sum dist/index.html dist/manifest.json > dist/SHA256SUMS
+          (cd dist && sha256sum index.html manifest.json > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: crm-build-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
