@@ -18,6 +18,8 @@ export async function login(page: Page, user: { email: string; password: string 
 }
 
 export async function logout(page: Page) {
+  const menuButton = page.getByRole('button', { name: 'Открыть меню' })
+  if (await menuButton.isVisible()) await menuButton.click()
   await page.getByRole('button', { name: 'Выйти' }).click()
   await expect(page).toHaveURL(/\/login/)
 }

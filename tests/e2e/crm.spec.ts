@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { executor, login, manager, uniqueLabel } from './helpers'
+import { executor, login, logout, manager, uniqueLabel } from './helpers'
 
 async function createTask(page: Parameters<typeof login>[0], objectName: string, taskTitle: string) {
   await login(page, manager)
@@ -49,7 +49,7 @@ test('executor completes an isolated task and manager returns it with a comment'
   const objectName = uniqueLabel('E2E поток')
   const taskTitle = uniqueLabel('Проверить журнал')
   await createTask(page, objectName, taskTitle)
-  await page.getByRole('button', { name: 'Выйти' }).click()
+  await logout(page)
   await login(page, executor)
   await page.getByRole('link', { name: 'Мои задачи' }).click()
   await page.getByRole('link', { name: new RegExp(taskTitle) }).click()
@@ -57,7 +57,7 @@ test('executor completes an isolated task and manager returns it with a comment'
   await expect(page.getByText('Статус изменён: В работе.')).toBeVisible()
   await page.getByRole('button', { name: 'Отправить на проверку' }).click()
   await expect(page.getByText('Статус изменён: На проверке.')).toBeVisible()
-  await page.getByRole('button', { name: 'Выйти' }).click()
+  await logout(page)
   await login(page, manager)
   await page.getByRole('link', { name: objectName }).click()
   await page.getByRole('link', { name: new RegExp(taskTitle) }).click()
